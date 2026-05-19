@@ -37,9 +37,11 @@ class Messages {
             body: JSON.stringify(payload),
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to send message: ${response.statusText}`);
-        }
+        console.log(response);
+
+        console.log(`Message sent to ${remoteJid}: ${message}`);
+
+
 
         const data = await response.json();
         return data;
