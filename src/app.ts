@@ -1,4 +1,5 @@
-import express, { Request, Response } from 'express'
+import crypto from 'node:crypto'
+import express, { NextFunction, Request, Response } from 'express'
 import { configDotenv } from "dotenv";
 import log from './log'
 import Messages from './controllers/message';
@@ -21,6 +22,8 @@ configDotenv()
 
 const app = express()
 const port = Number(process.env.PORT || 4000)
+const sessionCookieName = 'wuzapi_admin_session'
+const sessionTtlMs = 1000 * 60 * 60 * 12
 
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -28,7 +31,34 @@ app.use(express.urlencoded({ extended: true }));
 const envRemoteJids = parseJidList(process.env.EVOLUTION_REMOTEJID || "5573935050217")
 seedRecipientsFromEnv(envRemoteJids)
 
-app.get('/', (req: Request, res: Response) => {
+app.get('/login', (req: Request, res: Response) => {
+    if (isAuthenticated(req)) {
+        return res.redirect('/')
+    }
+
+    res.status(200).type('html').send(renderLogin())
+});
+
+app.post('/login', (req: Request, res: Response) => {
+    const username = String(req.body.username || '')
+    const password = String(req.body.password || '')
+
+    if (!isValidLogin(username, password)) {
+        return res.status(401).type('html').send(renderLogin('Usuário ou senha inválidos.'))
+    }
+
+    res.setHeader('Set-Cookie', buildSessionCookie())
+    res.redirect('/')
+});
+
+app.post('/logout', requireAuth, (req: Request, res: Response) => {
+    res.setHeader('Set-Cookie', `${sessionCookieName}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`)
+    res.redirect('/login')
+});
+
+app.use('/api', requireAuth)
+
+app.get('/', requireAuth, (req: Request, res: Response) => {
     res.status(200).type('html').send(renderDashboard())
 });
 
@@ -265,6 +295,215 @@ function safeJson(value: string | null) {
     }
 }
 
+function requireAuth(req: Request, res: Response, next: NextFunction) {
+    if (isAuthenticated(req)) {
+        return next()
+    }
+
+    if (req.originalUrl.startsWith('/api')) {
+        return res.status(401).json({ message: 'Faça login para acessar o painel.' })
+    }
+
+    res.redirect('/login')
+}
+
+function isAuthenticated(req: Request) {
+    const token = getCookie(req, sessionCookieName)
+
+    if (!token) {
+        return false
+    }
+
+    const parts = token.split('.')
+
+    if (parts.length !== 3) {
+        return false
+    }
+
+    const [expiresAt, nonce, signature] = parts
+    const expires = Number(expiresAt)
+
+    if (!Number.isFinite(expires) || expires < Date.now()) {
+        return false
+    }
+
+    const expected = signSession(`${expiresAt}.${nonce}`)
+    return timingSafeEqual(signature, expected)
+}
+
+function isValidLogin(username: string, password: string) {
+    const expectedUsername = process.env.ADMIN_USERNAME || 'admin'
+    const expectedPassword = process.env.ADMIN_PASSWORD || ''
+
+    if (!expectedPassword) {
+        log.warn('ADMIN_PASSWORD não configurado. Login administrativo bloqueado.')
+        return false
+    }
+
+    return timingSafeEqual(username, expectedUsername) && timingSafeEqual(password, expectedPassword)
+}
+
+function buildSessionCookie() {
+    const expiresAt = Date.now() + sessionTtlMs
+    const nonce = crypto.randomBytes(16).toString('base64url')
+    const payload = `${expiresAt}.${nonce}`
+    const token = `${payload}.${signSession(payload)}`
+    const secure = process.env.COOKIE_SECURE === 'true' ? '; Secure' : ''
+
+    return `${sessionCookieName}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(sessionTtlMs / 1000)}${secure}`
+}
+
+function signSession(value: string) {
+    const secret = process.env.AUTH_SECRET || process.env.WUZAPI_TOKEN || 'local-dev-secret'
+    return crypto.createHmac('sha256', secret).update(value).digest('base64url')
+}
+
+function timingSafeEqual(a: string, b: string) {
+    const left = Buffer.from(a)
+    const right = Buffer.from(b)
+
+    if (left.length !== right.length) {
+        return false
+    }
+
+    return crypto.timingSafeEqual(left, right)
+}
+
+function getCookie(req: Request, name: string) {
+    const header = req.headers.cookie
+
+    if (!header) {
+        return null
+    }
+
+    for (const cookie of header.split(';')) {
+        const [key, ...value] = cookie.trim().split('=')
+
+        if (key === name) {
+            return decodeURIComponent(value.join('='))
+        }
+    }
+
+    return null
+}
+
+function escapeHtmlServer(value: string) {
+    return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;')
+}
+
+function renderLogin(errorMessage = '') {
+    return `<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Login - Painel Wuzapi</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #f5f7fb;
+            --surface: #ffffff;
+            --text: #17202f;
+            --muted: #64748b;
+            --line: #d9e2ec;
+            --accent: #147a63;
+            --danger: #ba2d3b;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+
+        * { box-sizing: border-box; }
+        body {
+            min-height: 100vh;
+            margin: 0;
+            display: grid;
+            place-items: center;
+            background: var(--bg);
+            color: var(--text);
+            padding: 24px;
+        }
+
+        main {
+            width: min(420px, 100%);
+            background: var(--surface);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 24px;
+        }
+
+        h1, p { margin: 0; }
+        h1 { font-size: 24px; line-height: 1.2; }
+        p { color: var(--muted); margin-top: 8px; font-size: 14px; }
+        form { display: grid; gap: 14px; margin-top: 22px; }
+        label {
+            display: grid;
+            gap: 6px;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        input {
+            width: 100%;
+            border: 1px solid var(--line);
+            border-radius: 7px;
+            padding: 11px 12px;
+            color: var(--text);
+            font-size: 15px;
+            outline: none;
+        }
+
+        input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(20, 122, 99, .14);
+        }
+
+        button {
+            border: 0;
+            border-radius: 7px;
+            background: var(--accent);
+            color: #fff;
+            cursor: pointer;
+            font-weight: 700;
+            padding: 11px 12px;
+            font-size: 15px;
+        }
+
+        .error {
+            margin-top: 14px;
+            color: var(--danger);
+            background: #fff0f2;
+            border: 1px solid #f2b8c0;
+            border-radius: 7px;
+            padding: 10px 12px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>Acesso administrativo</h1>
+        <p>Entre para acompanhar notificações e gerenciar envios Wuzapi.</p>
+        ${errorMessage ? `<div class="error">${escapeHtmlServer(errorMessage)}</div>` : ''}
+        <form method="post" action="/login">
+            <label>Usuário
+                <input name="username" autocomplete="username" required autofocus>
+            </label>
+            <label>Senha
+                <input name="password" type="password" autocomplete="current-password" required>
+            </label>
+            <button type="submit">Entrar</button>
+        </form>
+    </main>
+</body>
+</html>`
+}
+
 function renderDashboard() {
     return `<!doctype html>
 <html lang="pt-BR">
@@ -321,6 +560,8 @@ function renderDashboard() {
         p, td, th, input, select, textarea, button { font-size: 14px; }
         .muted { color: var(--muted); }
         .status { font-weight: 700; color: var(--accent); }
+        .logout-form { margin: 0; }
+        .logout-form button { padding: 9px 11px; }
 
         main {
             display: grid;
@@ -500,7 +741,12 @@ function renderDashboard() {
                 <h1>Painel de Notificações Wuzapi</h1>
                 <p class="muted">Acompanhamento do webhook Zoho e envios para WhatsApp.</p>
             </div>
-            <div class="status" id="status">Carregando...</div>
+            <div class="row">
+                <div class="status" id="status">Carregando...</div>
+                <form class="logout-form" method="post" action="/logout">
+                    <button class="secondary" type="submit">Sair</button>
+                </form>
+            </div>
         </div>
     </header>
 
