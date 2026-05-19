@@ -37,16 +37,17 @@ class Messages {
             body: JSON.stringify(payload),
         });
 
-        console.log(response);
+        const text = await response.text();
+        const data = text ? parseResponse(text) : {};
 
-        console.log(`Message sent to ${remoteJid}: ${message}`);
+        if (!response.ok) {
+            throw new Error(`Wuzapi returned ${response.status}: ${text}`);
+        }
 
-
-
-        const data = await response.json();
+        log.debug(`Message sent to ${remoteJid}: ${message}`);
         return data;
     } catch (error) {
-        console.error('Error sending message:', error);
+        log.error('Error sending Wuzapi message:', error);
         throw error;
     }
 }
@@ -86,3 +87,11 @@ class Messages {
 }
 
 export default Messages
+
+function parseResponse(text: string) {
+    try {
+        return JSON.parse(text)
+    } catch {
+        return { raw: text }
+    }
+}
