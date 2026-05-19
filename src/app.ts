@@ -35,7 +35,7 @@ app.post('/notificate', async (req: Request, res: Response) => {
             res.status(200).json({ sucess: true, message: "Recebido" })
             log.trace("É Aprovação")
             const notificar = new Messages("🎉 Nova Aprovação no Fênix", REMOTEJID, true, INSTANCE)
-            notificar.sendMessage()
+            notificar.sendWuzapiMessage(process.env.WUZAPI_TOKEN!, REMOTEJID, "🎉 Nova Aprovação no Fênix")
             return
         }
 
@@ -45,7 +45,7 @@ app.post('/notificate', async (req: Request, res: Response) => {
             res.status(200).json({ sucess: true, message: "Recebido" })
             log.trace("É Notificação de Projeto, enviando notificação")
             const notificar = new Messages("❗ Projeto Notificado - Verificar no Fênix", REMOTEJID, true, INSTANCE)
-            notificar.sendMessage()
+            notificar.sendWuzapiMessage(process.env.WUZAPI_TOKEN!, REMOTEJID, "❗ Projeto Notificado - Verificar no Fênix")
             return
         }
 

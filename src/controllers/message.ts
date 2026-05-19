@@ -2,6 +2,11 @@ import { isAxiosError } from "axios";
 import log from "../log";
 import request from './axios'
 
+interface WuzapiMessage {
+    "Phone": string,
+    "Body": string
+}
+
 class Messages {
     message: string;
     remoteJid: string;
@@ -12,41 +17,70 @@ class Messages {
         this.message = message;
         this.remoteJid = remoteJid;
         this.notifyAll = notifyAll ? true : false,
-        this.instance = typeof instance == 'undefined' ? 'instancia' : instance
+            this.instance = typeof instance == 'undefined' ? 'instancia' : instance
     }
 
-    public async sendMessage() {
-        try {
+    public async sendWuzapiMessage(instanceToken: string, remoteJid: string, message: string) {
+    const url = `https://wuzapi.abaincendio.com.br/chat/send/text`;
+    const payload: WuzapiMessage = {
+        Phone: remoteJid,
+        Body: message,
+    };
 
-            const message = `${this.message}\n\n🤖 Essa é uma mensagem automática 🤖`
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'token': instanceToken,
+            },
+            body: JSON.stringify(payload),
+        });
 
-            const options =
-            {
-                number: this.remoteJid,
-                text: message,
-                options: {
-                    delay: 5000,
-                    presence: "composing",
-                    linkPreview: true,
-                    mentions: {
-                        everyOne: true
-                    }
-                },
-                textMessage: {
-                    text: message
-                }
-            };
-
-            const result = await request.post(`/${this.instance ?? "instancia"}`, options)
-
-            log.debug(result.data)
-        } catch (error) {
-            if (isAxiosError(error)) {
-                log.fatal(error.response?.data)
-            }
-            // log.fatal(error)
+        if (!response.ok) {
+            throw new Error(`Failed to send message: ${response.statusText}`);
         }
+
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error('Error sending message:', error);
+        throw error;
     }
+}
+
+    public async sendEvoMessage() {
+    try {
+
+        const message = `${this.message}\n\n🤖 Essa é uma mensagem automática 🤖`
+
+        const options =
+        {
+            number: this.remoteJid,
+            text: message,
+            options: {
+                delay: 5000,
+                presence: "composing",
+                linkPreview: true,
+                mentions: {
+                    everyOne: true
+                }
+            },
+            textMessage: {
+                text: message
+            }
+        };
+
+        const result = await request.post(`/${this.instance ?? "instancia"}`, options)
+
+        log.debug(result.data)
+    } catch (error) {
+        if (isAxiosError(error)) {
+            log.fatal(error.response?.data)
+        }
+        // log.fatal(error)
+    }
+}
 }
 
 export default Messages
